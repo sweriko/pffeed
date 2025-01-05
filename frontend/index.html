@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-Time Token Feed</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #121212;
+      color: white;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: flex-start;
+      align-items: flex-start;
+    }
+
+    .feed-container {
+      width: 300px; /* Adjusted width for smaller rectangles */
+      margin: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      text-align: left; /* Align everything to the left */
+    }
+
+    .coin-card {
+      display: flex;
+      flex-direction: row; /* Place image and text side by side */
+      background-color: #1a1a1a;
+      padding: 10px;
+      border-radius: 8px;
+      align-items: center; /* Vertically center content */
+      text-decoration: none; /* Remove link styling */
+      color: white; /* Ensure text color stays consistent */
+    }
+
+    .coin-card:hover {
+      background-color: #292929; /* Highlight on hover */
+    }
+
+    .image-container {
+      width: 88px;
+      height: 88px;
+      flex-shrink: 0; /* Prevent shrinking */
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px; /* Match Pump.fun style */
+      background-color: #2a2a2a; /* Neutral background for non-square images */
+      margin-right: 15px; /* Add spacing between image and metadata */
+    }
+
+    .coin-image {
+      width: 100%;
+      height: 100%;
+      object-fit: contain; /* Ensure the image fits within the container without distortion */
+    }
+
+    .metadata {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      justify-content: center;
+      flex-grow: 1; /* Allow text to take up remaining space */
+    }
+
+    .metadata p {
+      margin: 0;
+      text-align: left; /* Ensure text alignment is left */
+    }
+  </style>
+</head>
+<body>
+  <div class="feed-container" id="feed-container"></div>
+
+  <script>
+    const feedContainer = document.getElementById("feed-container");
+
+    const websocket = new WebSocket("ws://localhost:3000"); // Connect to backend server
+
+    websocket.onmessage = async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        // Handle token creation events
+        if (data.method === "subscribeNewToken" || data.txType === "create") {
+          addTokenToFeed(data);
+        }
+      } catch (error) {
+        console.error("Error parsing message from server:", error);
+      }
+    };
+
+    function addTokenToFeed(data) {
+      const tokenCard = document.createElement("a");
+      tokenCard.classList.add("coin-card");
+      tokenCard.href = `https://pump.fun/coin/${data.mint}`; // Construct Pumpfun URL using mint
+      tokenCard.target = "_blank"; // Open link in a new tab
+
+      const imageUrl = data.image || "https://via.placeholder.com/88";
+      const name = data.name || "Unknown";
+      const symbol = data.symbol || "Unknown";
+      let description = data.description || "No description provided.";
+
+      // Truncate description to 20 characters
+      if (description.length > 20) {
+        description = description.substring(0, 20) + "...";
+      }
+
+      tokenCard.innerHTML = `
+        <div class="image-container">
+          <img src="${imageUrl}" alt="${name}" class="coin-image" />
+        </div>
+        <div class="metadata">
+          <p><strong>Name:</strong> ${name}</p>
+          <p><strong>Symbol:</strong> ${symbol}</p>
+          <p><strong>Description:</strong> ${description}</p>
+        </div>
+      `;
+
+      feedContainer.prepend(tokenCard); // Add new tokens to the top of the feed
+
+      // Limit the feed to the most recent 20 entries
+      if (feedContainer.children.length > 20) {
+        feedContainer.removeChild(feedContainer.lastChild);
+      }
+    }
+  </script>
+</body>
+</html>
