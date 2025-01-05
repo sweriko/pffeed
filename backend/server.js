@@ -1,11 +1,22 @@
+/**
+ * server.js
+ * 
+ * 1) Serves static files from /frontend
+ * 2) Connects to PumpPortal WebSocket API
+ * 3) Holds events in a global queue
+ * 4) Broadcasts them to all clients at regular intervals so 
+ *    that every user sees the same sequence in real-time.
+ */
+
 const WebSocket = require("ws");
 const express = require("express");
 const axios = require("axios");
-const fs = require("fs");
 const path = require("path");
 
 const app = express();
 const PORT = 3000;
+
+// PumpPortal WebSocket
 const API_URL = "wss://pumpportal.fun/api/data";
 const IPFS_GATEWAYS = [
   "https://ipfs.io/ipfs/",
@@ -14,17 +25,39 @@ const IPFS_GATEWAYS = [
 ];
 
 // Serve frontend
-app.use(express.static("../frontend"));
+app.use(express.static(path.join(__dirname, "../frontend")));
 
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`[INFO] Server running at http://localhost:${PORT}`);
 });
 
-// WebSocket for frontend clients
+// WebSocket for our frontend clients
 const wss = new WebSocket.Server({ server });
 
-// Connect to PumpPortal WebSocket API
+// A global queue of “new token” events
+const eventQueue = [];
+
+// Broadcast frequency: one new event from the queue every 1 second
+const BROADCAST_INTERVAL_MS = 1000;
+
+function broadcastToClients(data) {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(data));
+    }
+  });
+}
+
+// Periodically pop from our local queue => broadcast to all clients
+setInterval(() => {
+  if (eventQueue.length > 0) {
+    const nextEvent = eventQueue.shift();
+    broadcastToClients(nextEvent);
+  }
+}, BROADCAST_INTERVAL_MS);
+
+// Connect to PumpPortal WebSocket
 let pumpPortalSocket;
 function connectWebSocket() {
   pumpPortalSocket = new WebSocket(API_URL);
@@ -40,7 +73,8 @@ function connectWebSocket() {
       if (parsedMessage.txType === "create") {
         console.log("[INFO] New Token Event:", JSON.stringify(parsedMessage, null, 2));
         const enrichedData = await enrichTokenData(parsedMessage);
-        broadcastToClients(enrichedData);
+        // Add to our queue
+        eventQueue.push(enrichedData);
       }
     } catch (error) {
       console.error("[ERROR] Failed to process message:", error);
@@ -57,20 +91,14 @@ function connectWebSocket() {
     console.error("[ERROR] WebSocket error:", error);
   });
 }
+connectWebSocket();
 
-// Broadcast data to connected clients
-function broadcastToClients(data) {
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
-    }
-  });
-}
-
-// Enrich token data with metadata from `uri`
+/**
+ * Enrich the token data with metadata from its URI.
+ */
 async function enrichTokenData(tokenData) {
   if (!tokenData.uri) {
-    console.warn("[WARNING] Token data has no URI. Skipping enrichment.");
+    console.warn("[WARNING] Token has no URI. Skipping enrichment.");
     return tokenData;
   }
 
@@ -81,15 +109,15 @@ async function enrichTokenData(tokenData) {
       console.log(`[INFO] Fetching metadata from: ${adjustedUri}`);
       const response = await axios.get(adjustedUri);
       metadata = response.data;
-      break; // Stop trying other gateways if successful
+      break; // Found metadata, stop
     } catch (error) {
       console.warn(`[WARNING] Failed to fetch metadata from ${gateway}: ${error.message}`);
     }
   }
 
   if (!metadata) {
-    console.error("[ERROR] Failed to fetch metadata after multiple attempts.");
-    return tokenData; // Return original data if fetching fails
+    console.error("[ERROR] Could not fetch metadata from any gateway.");
+    return tokenData; 
   }
 
   const { name, symbol, description, image, twitter, website } = metadata;
@@ -106,7 +134,9 @@ async function enrichTokenData(tokenData) {
   };
 }
 
-// Process metadata image for alternate gateways
+/**
+ * Convert IPFS image link to a Pinata-based gateway link
+ */
 function processMetadataImage(imageUrl) {
   if (!imageUrl) return "";
   const parts = imageUrl.split("/ipfs/");
@@ -114,14 +144,11 @@ function processMetadataImage(imageUrl) {
     const hash = parts[1];
     return `https://pump.mypinata.cloud/ipfs/${hash}?img-width=256&img-dpr=2&img-onerror=redirect`;
   }
-  return imageUrl; // Return original URL if not an IPFS link
+  return imageUrl;
 }
 
-// WebSocket connection for clients
+// Frontend WebSocket connection
 wss.on("connection", (socket) => {
   console.log("[INFO] Client connected");
   socket.on("close", () => console.log("[INFO] Client disconnected"));
 });
-
-// Start the WebSocket connection
-connectWebSocket();
