@@ -6,20 +6,22 @@ body {
     padding: 0;
   }
   
-  /* Left-aligned feed container */
   .feed-container {
     position: relative;
-    width: 500px; 
-    height: 900px; 
-    margin-left: 20px; /* keep it on the left side */
+    width: 500px;
+    height: 900px;
+    margin-left: 20px;
     margin-top: 20px;
     background-color: #1a1a1a;
     border-radius: 8px;
-    overflow: hidden; /* hide coins above and below container */
+    overflow: hidden;
   }
   
-  /* The coin card, absolutely positioned by JS */
+  /* Each coin card is absolutely positioned, so we can transform it down. */
   .coin-card {
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 460px;
     display: flex;
     flex-direction: row;
@@ -28,10 +30,14 @@ body {
     border-radius: 8px;
     text-decoration: none;
     color: white;
-    margin-left: 20px; /* small indent from container's left edge */
+    margin-left: 20px;
+  
+    /* GPU hints to reduce flicker as they move */
+    will-change: transform;
+    transform-style: preserve-3d;
+    backface-visibility: hidden;
   }
   
-  /* The coin's image */
   .coin-image {
     width: 88px;
     height: 88px;
@@ -40,7 +46,6 @@ body {
     object-fit: cover;
   }
   
-  /* Metadata for each coin (name, symbol, desc) */
   .metadata {
     display: flex;
     flex-direction: column;
