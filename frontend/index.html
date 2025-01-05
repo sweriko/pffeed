@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Real-Time Token Feed</title>
+  <title>Watermill Coin Feed</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -14,62 +14,49 @@
       display: flex;
       justify-content: flex-start;
       align-items: flex-start;
+      overflow: hidden; /* Prevent scrollbars for the animation */
     }
 
     .feed-container {
-      width: 300px; /* Adjusted width for smaller rectangles */
-      margin: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      text-align: left; /* Align everything to the left */
+      position: relative;
+      width: 500px; /* Increased width */
+      height: 900px; /* Increased height */
+      overflow: hidden; /* Ensure coins stay within the container */
+      background-color: #1a1a1a;
+      border-radius: 8px;
+      margin-left: 20px; /* Align feed container to the left */
     }
 
     .coin-card {
+      position: absolute;
+      width: 460px;
       display: flex;
-      flex-direction: row; /* Place image and text side by side */
-      background-color: #1a1a1a;
+      flex-direction: row;
+      background-color: #292929;
       padding: 10px;
       border-radius: 8px;
-      align-items: center; /* Vertically center content */
-      text-decoration: none; /* Remove link styling */
-      color: white; /* Ensure text color stays consistent */
+      align-items: center;
+      text-decoration: none;
+      color: white;
+      opacity: 0; /* Start hidden */
+      transition: opacity 0.5s ease-in-out, transform 0.5s ease; /* Smooth fade-in and prevent jitter */
     }
 
-    .coin-card:hover {
-      background-color: #292929; /* Highlight on hover */
-    }
-
-    .image-container {
+    .coin-card img {
       width: 88px;
       height: 88px;
-      flex-shrink: 0; /* Prevent shrinking */
-      overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 8px; /* Match Pump.fun style */
-      background-color: #2a2a2a; /* Neutral background for non-square images */
-      margin-right: 15px; /* Add spacing between image and metadata */
+      border-radius: 8px;
+      margin-right: 15px;
     }
 
-    .coin-image {
-      width: 100%;
-      height: 100%;
-      object-fit: contain; /* Ensure the image fits within the container without distortion */
-    }
-
-    .metadata {
+    .coin-card .metadata {
       display: flex;
       flex-direction: column;
       gap: 5px;
-      justify-content: center;
-      flex-grow: 1; /* Allow text to take up remaining space */
     }
 
-    .metadata p {
+    .coin-card .metadata p {
       margin: 0;
-      text-align: left; /* Ensure text alignment is left */
     }
   </style>
 </head>
@@ -78,42 +65,33 @@
 
   <script>
     const feedContainer = document.getElementById("feed-container");
+    const coinQueue = [];
+    const DISPLAY_INTERVAL = 1000; // One coin every 2 seconds
+    const FLOW_SPEED = 1; // Slower downward movement
 
-    const websocket = new WebSocket("ws://localhost:3000"); // Connect to backend server
-
-    websocket.onmessage = async (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        // Handle token creation events
-        if (data.method === "subscribeNewToken" || data.txType === "create") {
-          addTokenToFeed(data);
-        }
-      } catch (error) {
-        console.error("Error parsing message from server:", error);
-      }
-    };
-
-    function addTokenToFeed(data) {
+    function displayCoin(data) {
       const tokenCard = document.createElement("a");
       tokenCard.classList.add("coin-card");
-      tokenCard.href = `https://pump.fun/coin/${data.mint}`; // Construct Pumpfun URL using mint
-      tokenCard.target = "_blank"; // Open link in a new tab
+      tokenCard.href = `https://pump.fun/coin/${data.mint}`;
+      tokenCard.target = "_blank";
+
+      // Transform image URL to use Pump.fun's Pinata gateway
+      if (data.image && data.image.includes("/ipfs/")) {
+        const ipfsHash = data.image.split("/ipfs/")[1];
+        data.image = `https://pump.mypinata.cloud/ipfs/${ipfsHash}`;
+      }
 
       const imageUrl = data.image || "https://via.placeholder.com/88";
       const name = data.name || "Unknown";
       const symbol = data.symbol || "Unknown";
       let description = data.description || "No description provided.";
 
-      // Truncate description to 20 characters
       if (description.length > 20) {
         description = description.substring(0, 20) + "...";
       }
 
       tokenCard.innerHTML = `
-        <div class="image-container">
-          <img src="${imageUrl}" alt="${name}" class="coin-image" />
-        </div>
+        <img src="${imageUrl}" alt="${name}" loading="lazy" />
         <div class="metadata">
           <p><strong>Name:</strong> ${name}</p>
           <p><strong>Symbol:</strong> ${symbol}</p>
@@ -121,13 +99,61 @@
         </div>
       `;
 
-      feedContainer.prepend(tokenCard); // Add new tokens to the top of the feed
+      // Add the coin at the top of the feed container
+      feedContainer.appendChild(tokenCard);
 
-      // Limit the feed to the most recent 20 entries
-      if (feedContainer.children.length > 20) {
-        feedContainer.removeChild(feedContainer.lastChild);
+      // Set initial position off-screen (above the feed container)
+      const startPosition = -tokenCard.offsetHeight;
+      tokenCard.style.top = `${startPosition}px`;
+
+      // Animate the coin downwards
+      let position = startPosition;
+      const interval = setInterval(() => {
+        position += FLOW_SPEED;
+        tokenCard.style.top = `${position}px`;
+
+        // Fade in as it enters the view
+        if (position > 0 && position < 100) {
+          tokenCard.style.opacity = 1;
+        }
+
+        // Prevent overlapping by ensuring consistent movement
+        tokenCard.style.transform = `translateY(${position}px)`;
+
+        // Fade out as it exits the view
+        if (position > feedContainer.offsetHeight - tokenCard.offsetHeight) {
+          tokenCard.style.opacity = 0;
+        }
+
+        // Remove the coin when it fully exits the view
+        if (position > feedContainer.offsetHeight) {
+          clearInterval(interval);
+          feedContainer.removeChild(tokenCard);
+        }
+      }, 16); // Approximately 60 FPS
+    }
+
+    function processQueue() {
+      if (coinQueue.length > 0) {
+        const nextCoin = coinQueue.shift();
+        displayCoin(nextCoin);
       }
     }
+
+    setInterval(processQueue, DISPLAY_INTERVAL);
+
+    const websocket = new WebSocket("ws://localhost:3000");
+
+    websocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.method === "subscribeNewToken" || data.txType === "create") {
+          coinQueue.push(data);
+        }
+      } catch (error) {
+        console.error("Error parsing message from server:", error);
+      }
+    };
   </script>
 </body>
 </html>
