@@ -1,54 +1,24 @@
 body {
-    font-family: Arial, sans-serif;
-    background-color: #121212;
-    color: white;
     margin: 0;
     padding: 0;
-  }
-  
-  /* Left-aligned feed container */
-  .feed-container {
-    position: relative;
-    width: 500px; 
-    height: 900px; 
-    margin-left: 20px; /* keep it on the left side */
-    margin-top: 20px;
-    background-color: #1a1a1a;
-    border-radius: 8px;
-    overflow: hidden; /* hide coins above and below container */
-  }
-  
-  /* The coin card, absolutely positioned by JS */
-  .coin-card {
-    width: 460px;
-    display: flex;
-    flex-direction: row;
-    background-color: #292929;
-    padding: 10px;
-    border-radius: 8px;
-    text-decoration: none;
+    background-color: #121212;
+    overflow: hidden; /* optional: remove scrollbars if the canvas fills the window */
+    font-family: Arial, sans-serif;
     color: white;
-    margin-left: 20px; /* small indent from container's left edge */
   }
   
-  /* The coin's image */
-  .coin-image {
-    width: 88px;
-    height: 88px;
-    border-radius: 8px;
-    margin-right: 15px;
-    object-fit: cover;
-  }
+  /* Optional: position the Pixi canvas absolutely
+     so it's at (left=20px, top=20px, width=500px, height=900px) etc.
   
-  /* Metadata for each coin (name, symbol, desc) */
-  .metadata {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    justify-content: center;
-  }
+     We'll handle sizing in pixi-script.js below, 
+     but here's how you'd force it in CSS if you wanted:
   
-  .metadata p {
-    margin: 0;
+  canvas {
+    position: absolute;
+    left: 20px;
+    top: 20px;
+    width: 500px;    (CSS-based scaling)
+    height: 900px;   (CSS-based scaling)
   }
+  */
   

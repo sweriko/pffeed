@@ -1,11 +1,11 @@
 /**
  * server.js
- * 
- * 1) Serves static files from /frontend
- * 2) Connects to PumpPortal WebSocket API
- * 3) Holds events in a global queue
- * 4) Broadcasts them to all clients at regular intervals so 
- *    that every user sees the same sequence in real-time.
+ *
+ * 1) Subscribes to PumpPortal (or your data source).
+ * 2) Queues "create" token events, enriches them with IPFS metadata.
+ * 3) Every BROADCAST_INTERVAL_MS, pops an event -> broadcasts to clients.
+ * 4) Logs how many KB + how many messages were sent per minute.
+ * 5) Also logs the exact JSON being sent to the frontend/user each time.
  */
 
 const WebSocket = require("ws");
@@ -16,7 +16,7 @@ const path = require("path");
 const app = express();
 const PORT = 3000;
 
-// PumpPortal WebSocket
+// Example PumpPortal WebSocket endpoint
 const API_URL = "wss://pumpportal.fun/api/data";
 const IPFS_GATEWAYS = [
   "https://ipfs.io/ipfs/",
@@ -24,32 +24,64 @@ const IPFS_GATEWAYS = [
   "https://dweb.link/ipfs/"
 ];
 
-// Serve frontend
+// Serve frontend files
 app.use(express.static(path.join(__dirname, "../frontend")));
 
-// Start server
 const server = app.listen(PORT, () => {
   console.log(`[INFO] Server running at http://localhost:${PORT}`);
 });
 
-// WebSocket for our frontend clients
+// WebSocket server for your frontend
 const wss = new WebSocket.Server({ server });
 
-// A global queue of “new token” events
+// Global queue for new "create" events
 const eventQueue = [];
 
-// Broadcast frequency: one new event from the queue every 1 second
-const BROADCAST_INTERVAL_MS = 1000;
+// Broadcast interval: e.g. 2 seconds
+const BROADCAST_INTERVAL_MS = 2000;
 
+// ====== 1) Byte counters for logging ======
+let bytesSentThisMinute = 0;
+let messagesThisMinute = 0;
+
+// ====== 2) Log how many KB + messages every minute ======
+setInterval(() => {
+  const kbSent = bytesSentThisMinute / 1024;
+  console.log(
+    `[BANDWIDTH] Sent ${kbSent.toFixed(2)} KB / ${messagesThisMinute} messages in the last minute.`
+  );
+  // Reset counters
+  bytesSentThisMinute = 0;
+  messagesThisMinute = 0;
+}, 60_000);
+
+/**
+ * Broadcast data to all connected clients
+ * and measure how many bytes we send.
+ * Now also logs the JSON being sent.
+ */
 function broadcastToClients(data) {
+  // Convert data -> JSON
+  const messageString = JSON.stringify(data);
+
+  // ====== NEW: Log the JSON message ======
+  console.log("[BROADCAST] Sending to clients:", messageString);
+
+  // Calculate byte size of the JSON
+  const messageBytes = Buffer.byteLength(messageString, "utf8");
+
+  // Send to each connected client
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
+      client.send(messageString);
+      // Track bandwidth usage
+      bytesSentThisMinute += messageBytes;
+      messagesThisMinute++;
     }
   });
 }
 
-// Periodically pop from our local queue => broadcast to all clients
+// ====== 3) Schedule broadcasting from the queue ======
 setInterval(() => {
   if (eventQueue.length > 0) {
     const nextEvent = eventQueue.shift();
@@ -57,8 +89,9 @@ setInterval(() => {
   }
 }, BROADCAST_INTERVAL_MS);
 
-// Connect to PumpPortal WebSocket
+// ====== 4) Connect to PumpPortal WebSocket ======
 let pumpPortalSocket;
+
 function connectWebSocket() {
   pumpPortalSocket = new WebSocket(API_URL);
 
@@ -69,36 +102,35 @@ function connectWebSocket() {
 
   pumpPortalSocket.on("message", async (message) => {
     try {
-      const parsedMessage = JSON.parse(message.toString());
-      if (parsedMessage.txType === "create") {
-        console.log("[INFO] New Token Event:", JSON.stringify(parsedMessage, null, 2));
-        const enrichedData = await enrichTokenData(parsedMessage);
-        // Add to our queue
+      const parsed = JSON.parse(message.toString());
+      if (parsed.txType === "create") {
+        console.log("[INFO] New Token Event:", JSON.stringify(parsed, null, 2));
+        const enrichedData = await enrichTokenData(parsed);
         eventQueue.push(enrichedData);
       }
-    } catch (error) {
-      console.error("[ERROR] Failed to process message:", error);
+    } catch (err) {
+      console.error("[ERROR] Failed to process message:", err);
     }
   });
 
   pumpPortalSocket.on("close", (code, reason) => {
-    console.warn(`[WARNING] WebSocket closed. Code: ${code}, Reason: ${reason}`);
+    console.warn(`[WARNING] PumpPortal closed (code=${code}), reason=${reason}`);
     console.log("[INFO] Reconnecting in 5 seconds...");
     setTimeout(connectWebSocket, 5000);
   });
 
-  pumpPortalSocket.on("error", (error) => {
-    console.error("[ERROR] WebSocket error:", error);
+  pumpPortalSocket.on("error", (err) => {
+    console.error("[ERROR] PumpPortal WebSocket error:", err);
   });
 }
 connectWebSocket();
 
 /**
- * Enrich the token data with metadata from its URI.
+ * Enrich token data with IPFS metadata
  */
 async function enrichTokenData(tokenData) {
   if (!tokenData.uri) {
-    console.warn("[WARNING] Token has no URI. Skipping enrichment.");
+    console.warn("[WARNING] Token data has no URI. Skipping enrichment.");
     return tokenData;
   }
 
@@ -106,21 +138,21 @@ async function enrichTokenData(tokenData) {
   for (const gateway of IPFS_GATEWAYS) {
     const adjustedUri = tokenData.uri.replace("https://ipfs.io/ipfs/", gateway);
     try {
-      console.log(`[INFO] Fetching metadata from: ${adjustedUri}`);
+      console.log(`[INFO] Fetching metadata: ${adjustedUri}`);
       const response = await axios.get(adjustedUri);
       metadata = response.data;
-      break; // Found metadata, stop
-    } catch (error) {
-      console.warn(`[WARNING] Failed to fetch metadata from ${gateway}: ${error.message}`);
+      break;
+    } catch (err) {
+      console.warn(`[WARNING] Failed to fetch from ${gateway}: ${err.message}`);
     }
   }
 
   if (!metadata) {
-    console.error("[ERROR] Could not fetch metadata from any gateway.");
-    return tokenData; 
+    console.error("[ERROR] Could not fetch metadata after multiple attempts.");
+    return tokenData;
   }
 
-  const { name, symbol, description, image, twitter, website } = metadata;
+  const { name, symbol, description, image } = metadata;
   const processedImage = processMetadataImage(image);
 
   return {
@@ -128,14 +160,12 @@ async function enrichTokenData(tokenData) {
     name: name || tokenData.metadata_name,
     symbol: symbol || tokenData.metadata_symbol,
     description: description || "",
-    image: processedImage,
-    twitter: twitter || null,
-    website: website || null
+    image: processedImage
   };
 }
 
 /**
- * Convert IPFS image link to a Pinata-based gateway link
+ * Convert IPFS link to pump.mypinata.cloud
  */
 function processMetadataImage(imageUrl) {
   if (!imageUrl) return "";
@@ -147,7 +177,7 @@ function processMetadataImage(imageUrl) {
   return imageUrl;
 }
 
-// Frontend WebSocket connection
+// ====== 5) When a client connects ======
 wss.on("connection", (socket) => {
   console.log("[INFO] Client connected");
   socket.on("close", () => console.log("[INFO] Client disconnected"));
