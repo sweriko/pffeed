@@ -5,9 +5,8 @@
  * 2) Enriches each token with IPFS metadata.
  * 3) Keeps only necessary fields (name, symbol, image, description, mint).
  * 4) Truncates 'description' to 35 chars max, adding "..." if truncated.
- *    Also removes any line breaks/paragraph formatting -> single line.
- * 5) Broadcasts refined data to the frontend via WebSocket every 2s.
- * 6) Logs bandwidth usage (KB/min) and message count.
+ *    Also removes any line breaks -> single line.
+ * 5) Bundles every 8 tokens => random yes/no, broadcasts "decisionBundle".
  */
 
 const WebSocket = require("ws");
@@ -26,7 +25,7 @@ const IPFS_GATEWAYS = [
   "https://dweb.link/ipfs/"
 ];
 
-// Serve static files from ../frontend (which uses PixiJS)
+// Serve static files from ../frontend
 app.use(express.static(path.join(__dirname, "../frontend")));
 
 const server = app.listen(PORT, () => {
@@ -39,7 +38,12 @@ const wss = new WebSocket.Server({ server });
 // Queue for new token events
 const eventQueue = [];
 
-// Broadcast interval (e.g., 2 seconds)
+// === BUNDLE LOGIC ===
+let nextCoinId = 0;       // incrementing ID assigned to each incoming coin
+let currentBundle = [];   // tokens waiting in the current bundle
+const BUNDLE_SIZE = 8;    // group each set of 8 coins
+
+// Broadcast interval (e.g., 700ms)
 const BROADCAST_INTERVAL_MS = 700;
 
 // ====== Bandwidth Logging ======
@@ -55,18 +59,11 @@ setInterval(() => {
   messagesThisMinute = 0;
 }, 60_000);
 
-/**
- * Broadcast minimal data to all clients,
- * ensuring the description is truncated to 35 chars
- * and line breaks are removed.
- */
-function broadcastToClients(refinedData) {
-  const messageString = JSON.stringify(refinedData);
-
-  console.log("[BROADCAST] Sending refined data:", messageString);
+function broadcastToClients(messageObj) {
+  const messageString = JSON.stringify(messageObj);
+  console.log("[DEBUG] Broadcasting message to clients:", messageString);
 
   const messageBytes = Buffer.byteLength(messageString, "utf8");
-
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(messageString);
@@ -84,9 +81,9 @@ setInterval(() => {
   }
 }, BROADCAST_INTERVAL_MS);
 
-// ===== PumpPortal Connection =====
 let pumpPortalSocket;
 function connectWebSocket() {
+  console.log("[INFO] Connecting to PumpPortal at", API_URL);
   pumpPortalSocket = new WebSocket(API_URL);
 
   pumpPortalSocket.on("open", () => {
@@ -95,28 +92,32 @@ function connectWebSocket() {
   });
 
   pumpPortalSocket.on("message", async (message) => {
+    console.log("[DEBUG] Raw incoming message from PumpPortal:", message);
     try {
       const parsed = JSON.parse(message.toString());
+      console.log("[DEBUG] Parsed PumpPortal message:", parsed);
+
       if (parsed.txType === "create") {
         console.log("[INFO] New Token Event:", JSON.stringify(parsed, null, 2));
 
-        // 1) Enrich token with IPFS data
+        // Enrich with IPFS
         const enriched = await enrichTokenData(parsed);
 
-        // 2) Refine + truncate
+        // Truncate desc
         const singleLineDesc = (enriched.description || "")
-          // Replace line breaks with spaces:
           .replace(/\r?\n|\r/g, " ")
-          // Also remove extra tabs, etc.:
           .replace(/\s+/g, " ")
           .trim();
-
         let finalDesc = singleLineDesc;
         if (finalDesc.length > 35) {
           finalDesc = finalDesc.slice(0, 35) + "...";
         }
 
+        // Assign coinId
+        const coinId = nextCoinId++;
         const refined = {
+          type: "newToken",
+          coinId,
           name: enriched.name || "Unknown",
           symbol: enriched.symbol || "Unknown",
           image: enriched.image || "",
@@ -124,11 +125,35 @@ function connectWebSocket() {
           mint: enriched.mint
         };
 
-        // 3) Queue for broadcasting
+        // Add coinId to bundle
+        currentBundle.push(coinId);
+        console.log(
+          `[DEBUG] currentBundle size = ${currentBundle.length}, coinId = ${coinId}`
+        );
+
+        // If bundle full => assign yes/no
+        if (currentBundle.length === BUNDLE_SIZE) {
+          console.log("[DEBUG] BUNDLE FULL => assigning random yes/no...");
+          const decisions = {};
+          currentBundle.forEach((id) => {
+            decisions[id] = Math.random() < 0.5 ? "no" : "yes";
+          });
+
+          // Broadcast decisionBundle
+          const decisionMessage = { type: "decisionBundle", decisions };
+          console.log("[DEBUG] decisionBundle broadcasted:", decisionMessage);
+          broadcastToClients(decisionMessage);
+
+          currentBundle = [];
+        }
+
+        // Queue for broadcasting
         eventQueue.push(refined);
+      } else {
+        console.log("[DEBUG] Received non-create message:", parsed);
       }
     } catch (err) {
-      console.error("[ERROR] Parsing PumpPortal message:", err);
+      console.error("[ERROR] Could not parse or handle PumpPortal message:", err);
     }
   });
 
@@ -156,9 +181,10 @@ async function enrichTokenData(tokenData) {
   let metadata;
   for (const gateway of IPFS_GATEWAYS) {
     const adjustedUri = tokenData.uri.replace("https://ipfs.io/ipfs/", gateway);
+    console.log(`[DEBUG] Attempting IPFS fetch: ${adjustedUri}`);
     try {
-      console.log(`[INFO] Fetching metadata: ${adjustedUri}`);
       const response = await axios.get(adjustedUri);
+      console.log("[DEBUG] IPFS fetch success:", response.data);
       metadata = response.data;
       break;
     } catch (err) {
@@ -167,7 +193,7 @@ async function enrichTokenData(tokenData) {
   }
 
   if (!metadata) {
-    console.error("[ERROR] Could not fetch metadata after attempts. Returning original data.");
+    console.error("[ERROR] Could not fetch metadata. Returning original data.");
     return tokenData;
   }
 

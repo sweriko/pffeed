@@ -1,24 +1,19 @@
 body {
-    margin: 0;
-    padding: 0;
-    background-color: #121212;
-    overflow: hidden; /* optional: remove scrollbars if the canvas fills the window */
-    font-family: Arial, sans-serif;
-    color: white;
-  }
-  
-  /* Optional: position the Pixi canvas absolutely
-     so it's at (left=20px, top=20px, width=500px, height=900px) etc.
-  
-     We'll handle sizing in pixi-script.js below, 
-     but here's how you'd force it in CSS if you wanted:
-  
-  canvas {
-    position: absolute;
-    left: 20px;
-    top: 20px;
-    width: 500px;    (CSS-based scaling)
-    height: 900px;   (CSS-based scaling)
-  }
-  */
-  
+  margin: 0;
+  padding: 0;
+  background-color: #121212;
+  overflow: hidden; /* remove scrollbars if the canvas fills the window */
+  font-family: Arial, sans-serif;
+  color: white;
+}
+
+/*
+Optionally, position the Pixi canvas absolutely if you want, but 
+we're letting pixi-script handle sizing to window.innerHeight.
+
+canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+*/
